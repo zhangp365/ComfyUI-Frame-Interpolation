@@ -59,7 +59,8 @@ class FILM_VFI:
                 "multiplier": ("INT", {"default": 2, "min": 2, "max": 1000}),
             },
             "optional": {
-                "optional_interpolation_states": ("INTERPOLATION_STATES", )
+                "optional_interpolation_states": ("INTERPOLATION_STATES", ),
+                "enabled": ("BOOLEAN",{"default": False})
             }
         }
     
@@ -74,8 +75,11 @@ class FILM_VFI:
         clear_cache_after_n_frames = 10,
         multiplier: typing.SupportsInt = 2,
         optional_interpolation_states: InterpolationStateList = None,
+        enabled: bool = False,
         **kwargs
     ):
+        if not enabled:
+            return (frames, )
         interpolation_states = optional_interpolation_states
         if self.model is None:
             model_path = load_file_from_github_release(MODEL_TYPE, ckpt_name)
