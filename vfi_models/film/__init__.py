@@ -6,6 +6,9 @@ import typing
 from vfi_utils import InterpolationStateList, load_file_from_github_release, preprocess_frames, postprocess_frames
 import pathlib
 import gc
+import time
+import logging
+logger = logging.getLogger(__name__)
 
 MODEL_TYPE = pathlib.Path(__file__).parent.name
 DEVICE = get_torch_device()
@@ -42,6 +45,10 @@ def inference(model, img_batch_1, img_batch_2, inter_frames):
     return [tensor.flip(0) for tensor in results]
 
 class FILM_VFI:
+
+    def __init__(self) -> None:
+        self.model = None
+        
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -70,10 +77,11 @@ class FILM_VFI:
         **kwargs
     ):
         interpolation_states = optional_interpolation_states
-        model_path = load_file_from_github_release(MODEL_TYPE, ckpt_name)
-        model = torch.jit.load(model_path, map_location='cpu')
-        model.eval()
-        model = model.to(DEVICE)
+        if self.model is None:
+            model_path = load_file_from_github_release(MODEL_TYPE, ckpt_name)
+            self.model = torch.jit.load(model_path, map_location='cpu')
+            self.model.eval()
+        self.model = self.model.to(DEVICE)
         dtype = torch.float32
 
         frames = preprocess_frames(frames)
@@ -91,23 +99,26 @@ class FILM_VFI:
             #Ensure that input frames are in fp32 - the same dtype as model
             frame_0 = frames[frame_itr:frame_itr+1].to(DEVICE).float()
             frame_1 = frames[frame_itr+1:frame_itr+2].to(DEVICE).float()
-            relust = inference(model, frame_0, frame_1, multipliers[frame_itr] - 1)
+            start_time = time.time()
+            relust = inference(self.model, frame_0, frame_1, multipliers[frame_itr] - 1)
+            second_time = time.time()
+            logger.debug(f"Comfy-VFI: FILM_VFI inference time: {second_time - start_time} seconds")
             output_frames.extend([frame.detach().cpu().to(dtype=dtype) for frame in relust[:-1]])
-
+            logger.debug(f"cost time: {time.time() - second_time} seconds")
             number_of_frames_processed_since_last_cleared_cuda_cache += 1
             # Try to avoid a memory overflow by clearing cuda cache regularly
             if number_of_frames_processed_since_last_cleared_cuda_cache >= clear_cache_after_n_frames:
-                print("Comfy-VFI: Clearing cache...", end = ' ')
+                logger.debug(f"Comfy-VFI: Clearing cache...")
                 soft_empty_cache()
                 number_of_frames_processed_since_last_cleared_cuda_cache = 0
-                print("Done cache clearing")
-            gc.collect()
+                logger.debug("Done cache clearing")
+                gc.collect()
         
         output_frames.append(frames[-1:].to(dtype=dtype)) # Append final frame
         output_frames = [frame.cpu() for frame in output_frames] #Ensure all frames are in cpu
         out = torch.cat(output_frames, dim=0)
         # clear cache for courtesy
-        print("Comfy-VFI: Final clearing cache...", end = ' ')
-        soft_empty_cache()
-        print("Done cache clearing")
+        #print("Comfy-VFI: Final clearing cache...", end = ' ')
+        # soft_empty_cache()
+        #print("Done cache clearing")
         return (postprocess_frames(out), )
